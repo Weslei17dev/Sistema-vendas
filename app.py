@@ -159,7 +159,7 @@ def init_db():
         estoque_atual INTEGER DEFAULT 0, estoque_minimo INTEGER DEFAULT 2, ativo INTEGER DEFAULT 1)""")
     run_query("""CREATE TABLE IF NOT EXISTS vendas(
         id INTEGER PRIMARY KEY AUTOINCREMENT, data TIMESTAMP NOT NULL, cliente_name TEXT,
-        valor_total REAL, pagamento TEXT, status TEXT DEFAULT 'Pago')""")
+        valor_total REAL, pagamento TEXT, status TEXT DEFAULT 'Pago', observacao TEXT DEFAULT '')""")
     run_query("""CREATE TABLE IF NOT EXISTS itens_venda(
         id INTEGER PRIMARY KEY AUTOINCREMENT, venda_id INTEGER, produto_nome TEXT,
         quantidade INTEGER, preco_unit REAL, FOREIGN KEY(venda_id) REFERENCES vendas(id))""")
@@ -167,7 +167,7 @@ def init_db():
     for tbl, col in [("clientes","ativo"),("produtos","ativo"),("categorias","ativo"),
                      ("pagamentos","ativo"),("clientes","rua"),("clientes","numero"),
                      ("clientes","complemento"),("clientes","bairro"),("clientes","cidade"),
-                     ("clientes","estado"),("clientes","cep")]:
+                     ("clientes","estado"),("clientes","cep"),("vendas","observacao")]:
         cols = run_query(f"PRAGMA table_info({tbl})", fetch=True)
         if cols and col not in [c[1] for c in cols]:
             dflt = "1" if col == "ativo" else "''"
@@ -192,7 +192,8 @@ def get_estoque(prod_id):
 #  SESSION STATE
 # ─────────────────────────────────────────────
 defaults = {"active_menu":"Dashboard","cart":[],"editing_prod_id":None,
-            "editing_prod_data":None,"adj_prod":None,"edit_cat_id":None,"edit_pag_id":None}
+            "editing_prod_data":None,"adj_prod":None,"edit_cat_id":None,"edit_pag_id":None,
+            "edit_cli_id":None,"edit_cli_data":None}
 for k,v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -221,7 +222,7 @@ with st.sidebar:
                 st.markdown('<div class="nav-active">', unsafe_allow_html=True)
             if st.button(f"{icon}  {label}", key=f"nav_{key}"):
                 st.session_state.active_menu = label
-                for k2 in ["editing_prod_id","editing_prod_data","adj_prod","edit_cat_id","edit_pag_id"]:
+                for k2 in ["editing_prod_id","editing_prod_data","adj_prod","edit_cat_id","edit_pag_id","edit_cli_id","edit_cli_data"]:
                     st.session_state[k2] = None
                 st.rerun()
             if is_active:
@@ -357,6 +358,9 @@ elif menu == "Pedidos":
                 cf1, cf2 = st.columns(2)
                 cliente_sel = cf1.selectbox("Cliente *", [c[0] for c in clis])
                 forma       = cf2.selectbox("Forma de Pagamento *", [p[0] for p in pags])
+                obs_pedido  = st.text_area("Observação (opcional)",
+                    placeholder="Ex: entregar na portaria, cliente solicitou nota fiscal, etc.",
+                    height=80)
                 fin_btn = st.form_submit_button(f"✅  Finalizar Venda", use_container_width=True)
 
             if fin_btn:
@@ -370,8 +374,8 @@ elif menu == "Pedidos":
                         show_error(e,"Ajuste as quantidades no carrinho.")
                 else:
                     total_venda = sum(x["preco"]*x["qtd"] for x in cart)
-                    ok = run_query("INSERT INTO vendas(data,cliente_name,valor_total,pagamento,status) VALUES(?,?,?,?,?)",
-                                   (datetime.now(),cliente_sel,total_venda,forma,"Pago"))
+                    ok = run_query("INSERT INTO vendas(data,cliente_name,valor_total,pagamento,status,observacao) VALUES(?,?,?,?,?,?)",
+                                   (datetime.now(),cliente_sel,total_venda,forma,"Pago",obs_pedido.strip()))
                     if ok is True:
                         vid_r = run_query("SELECT last_insert_rowid()", fetch=True)
                         if vid_r:
@@ -578,22 +582,92 @@ elif menu == "Clientes":
     col_b,col_f=st.columns([3,1])
     busca_cli =col_b.text_input("🔍  Buscar cliente",placeholder="Nome, CPF/CNPJ ou cidade…",key="busca_cli",label_visibility="collapsed")
     filtro_cli=col_f.selectbox("Status",["Ativos","Inativos","Todos"],key="filtro_cli",label_visibility="collapsed")
-    clis=run_query("SELECT id,nome,documento,telefone,cidade,ativo FROM clientes ORDER BY nome",fetch=True)
-    if clis:
-        if filtro_cli=="Ativos":   clis=[c for c in clis if c[5]==1]
-        if filtro_cli=="Inativos": clis=[c for c in clis if c[5]==0]
+
+    # Busca todos os dados do cliente para edição
+    clis_full=run_query(
+        "SELECT id,nome,documento,telefone,email,rua,numero,complemento,bairro,cidade,estado,cep,ativo "
+        "FROM clientes ORDER BY nome", fetch=True)
+
+    if clis_full:
+        clis_view = clis_full
+        if filtro_cli=="Ativos":   clis_view=[c for c in clis_view if c[12]==1]
+        if filtro_cli=="Inativos": clis_view=[c for c in clis_view if c[12]==0]
         if busca_cli:
             b=busca_cli.lower()
-            clis=[c for c in clis if b in (c[1] or "").lower() or b in (c[2] or "").lower() or b in (c[4] or "").lower()]
-        st.markdown(f"**{len(clis)} cliente(s)**")
-        for cli in clis:
-            cid,cnome,cdoc,ctel,ccid,cativo=cli
-            sb='<span class="badge ativo">Ativo</span>' if cativo else '<span class="badge inativo">Inativo</span>'
-            col_i,col_t=st.columns([9,1])
-            col_i.markdown(f"**{cnome}** &nbsp; {sb}<br><small style='color:#6b7280'>{cdoc} · {ctel or '—'} · {ccid or '—'}</small>",unsafe_allow_html=True)
-            if col_t.button("🔴" if cativo else "🟢",key=f"tog_cli_{cid}",help="Inativar" if cativo else "Ativar"):
-                run_query("UPDATE clientes SET ativo=? WHERE id=?",(0 if cativo else 1,cid)); st.rerun()
-            st.markdown('<div style="border-top:0.5px solid #eef0ff;margin:4px 0"></div>',unsafe_allow_html=True)
+            clis_view=[c for c in clis_view if b in (c[1] or "").lower()
+                       or b in (c[2] or "").lower() or b in (c[9] or "").lower()]
+
+        st.markdown(f"**{len(clis_view)} cliente(s)**")
+        for cli in clis_view:
+            (cid,cnome,cdoc,ctel,cemail,crua,cnum,ccomp,
+             cbairro,ccidade,cestado,ccep,cativo) = cli
+            sb=('<span class="badge ativo">Ativo</span>' if cativo
+                else '<span class="badge inativo">Inativo</span>')
+
+            # ── Modo edição ──
+            if st.session_state.edit_cli_id == cid:
+                st.markdown(f"#### ✏️ Editando: {cnome}")
+                with st.form(f"f_edit_cli_{cid}"):
+                    ec1,ec2=st.columns(2)
+                    en =ec1.text_input("Nome Completo *", value=cnome or "")
+                    edo=ec2.text_input("CPF / CNPJ *",    value=cdoc  or "",
+                                       placeholder="Somente números ou com pontuação")
+                    ec3,ec4=st.columns(2)
+                    etl =ec3.text_input("Telefone", value=ctel   or "")
+                    eml =ec4.text_input("E-mail",   value=cemail or "")
+                    st.markdown("**Endereço**")
+                    eea,eeb,eec=st.columns([3,1,2])
+                    erua =eea.text_input("Rua / Logradouro", value=crua   or "")
+                    enum =eeb.text_input("Número",            value=cnum  or "")
+                    ecomp=eec.text_input("Complemento",       value=ccomp or "")
+                    eed,eee,eef,eeg=st.columns([2,2,1,2])
+                    ebairro =eed.text_input("Bairro",  value=cbairro  or "")
+                    ecidade =eee.text_input("Cidade",  value=ccidade  or "")
+                    eestado =eef.text_input("UF",      value=cestado  or "", max_chars=2)
+                    ecep    =eeg.text_input("CEP",     value=ccep     or "", placeholder="00000-000")
+                    cs_e, cc_e = st.columns(2)
+                    sv_e=cs_e.form_submit_button("💾  Salvar alterações", use_container_width=True)
+                    cn_e=cc_e.form_submit_button("✕  Cancelar",           use_container_width=True)
+
+                if cn_e:
+                    st.session_state.edit_cli_id=None; st.session_state.edit_cli_data=None; st.rerun()
+                if sv_e:
+                    if not validate_required(en, edo):
+                        show_error("Preencha os campos obrigatórios.","Nome e CPF/CNPJ são obrigatórios.")
+                    elif not validate_doc(edo):
+                        show_error("CPF/CNPJ inválido.","CPF deve ter 11 dígitos e CNPJ 14 dígitos.")
+                    else:
+                        res=run_query(
+                            "UPDATE clientes SET nome=?,documento=?,telefone=?,email=?,"
+                            "rua=?,numero=?,complemento=?,bairro=?,cidade=?,estado=?,cep=? WHERE id=?",
+                            (en.strip(),edo.strip(),etl,eml,erua,enum,ecomp,
+                             ebairro,ecidade,eestado.upper() if eestado else "",ecep, cid))
+                        if res is True:
+                            show_success("Cliente atualizado com sucesso!",f"'{en}' foi salvo.")
+                            st.session_state.edit_cli_id=None; st.session_state.edit_cli_data=None
+                            st.rerun()
+                        elif res=="duplicate":
+                            show_error("Já existe um cliente com esse CPF/CNPJ.")
+                        else:
+                            show_error("Não foi possível salvar.")
+            else:
+                # ── Modo exibição ──
+                col_i, col_e, col_t = st.columns([8,1,1])
+                col_i.markdown(
+                    f"**{cnome}** &nbsp; {sb}<br>"
+                    f"<small style='color:#6b7280'>{cdoc} · {ctel or '—'} · {ccidade or '—'}</small>",
+                    unsafe_allow_html=True)
+                if col_e.button("✏️", key=f"edit_cli_{cid}", help="Editar cliente"):
+                    st.session_state.edit_cli_id  = cid
+                    st.session_state.edit_cli_data = cli
+                    st.rerun()
+                if col_t.button("🔴" if cativo else "🟢", key=f"tog_cli_{cid}",
+                                help="Inativar" if cativo else "Ativar"):
+                    run_query("UPDATE clientes SET ativo=? WHERE id=?",(0 if cativo else 1, cid))
+                    st.rerun()
+
+            st.markdown('<div style="border-top:0.5px solid #eef0ff;margin:4px 0"></div>',
+                        unsafe_allow_html=True)
     else:
         show_info("Nenhum cliente encontrado.","Ajuste os filtros ou adicione um novo cliente.")
 
@@ -606,35 +680,95 @@ elif menu == "Histórico de Vendas":
     filtro_status=st.selectbox("Filtrar por status",["Todos","Pago","Cancelado"],key="filtro_hist")
     where="" if filtro_status=="Todos" else f"WHERE v.status='{filtro_status}'"
     vendas=run_query(
-        f"""SELECT v.id,strftime('%d/%m/%Y %H:%M',v.data),v.cliente_name,
-                  v.valor_total,v.pagamento,v.status,
-                  GROUP_CONCAT(i.produto_nome||' x'||i.quantidade,' | ')
+        f"""SELECT v.id, strftime('%d/%m/%Y %H:%M',v.data), v.cliente_name,
+                   v.valor_total, v.pagamento, v.status,
+                   GROUP_CONCAT(i.produto_nome||' x'||i.quantidade,' | '),
+                   COALESCE(v.observacao,'')
            FROM vendas v LEFT JOIN itens_venda i ON i.venda_id=v.id
-           {where} GROUP BY v.id ORDER BY v.data DESC""",fetch=True)
+           {where} GROUP BY v.id ORDER BY v.data DESC""", fetch=True)
+
     if not vendas:
         show_info("Nenhuma venda encontrada.","Ajuste os filtros ou realize uma venda.")
     else:
         for row in vendas:
-            vid,data_fmt,cli,val,pag,status,itens=row
-            itens=itens or "—"
-            sb=('<span class="badge pago">Pago</span>' if status=="Pago"
-                else '<span class="badge cancelado">Cancelado</span>')
-            col_info,col_val,col_btn=st.columns([5,2,1])
+            vid, data_fmt, cli, val, pag, status, itens, obs = row
+            itens = itens or "—"
+            obs   = obs   or ""
+            is_pago = status == "Pago"
+            sb = ('<span class="badge pago">Pago</span>' if is_pago
+                  else '<span class="badge cancelado">Cancelado</span>')
+
+            col_info, col_val, col_acoes = st.columns([5, 2, 2])
+
             with col_info:
-                st.markdown(f"**#{vid} — {cli}** &nbsp; {sb}<br><small style='color:#6b7280'>{data_fmt} · {pag} · {itens}</small>",unsafe_allow_html=True)
+                obs_html = (f"<br><small style='color:#9ca3af;font-style:italic'>📝 {obs}</small>"
+                            if obs else "")
+                st.markdown(
+                    f"**#{vid} — {cli}** &nbsp; {sb}<br>"
+                    f"<small style='color:#6b7280'>{data_fmt} · {pag} · {itens}</small>"
+                    f"{obs_html}",
+                    unsafe_allow_html=True)
+
             with col_val:
-                st.markdown(f"<div style='font-family:Sora,sans-serif;font-size:1rem;font-weight:700;color:#6366f1;padding-top:4px'>{cur} {val:,.2f}</div>",unsafe_allow_html=True)
-            with col_btn:
-                if status=="Pago":
-                    if st.button("❌ Cancelar",key=f"cancel_{vid}",help="Cancelar este pedido e reverter estoque"):
-                        itens_db=run_query("SELECT produto_nome,quantidade FROM itens_venda WHERE venda_id=?",(vid,),fetch=True)
+                st.markdown(
+                    f"<div style='font-family:Sora,sans-serif;font-size:1rem;"
+                    f"font-weight:700;color:#6366f1;padding-top:4px'>"
+                    f"{cur} {val:,.2f}</div>",
+                    unsafe_allow_html=True)
+
+            with col_acoes:
+                if is_pago:
+                    # ── Cancelar pedido ──
+                    if st.button("❌ Cancelar", key=f"cancel_{vid}",
+                                 help="Cancelar pedido e reverter estoque"):
+                        itens_db = run_query(
+                            "SELECT produto_nome,quantidade FROM itens_venda WHERE venda_id=?",
+                            (vid,), fetch=True)
                         if itens_db:
-                            for pnome,pqtd in itens_db:
-                                run_query("UPDATE produtos SET estoque_atual=estoque_atual+? WHERE nome=?",(pqtd,pnome))
-                        run_query("UPDATE vendas SET status='Cancelado' WHERE id=?",(vid,))
-                        show_success(f"Pedido #{vid} cancelado com sucesso!","O estoque dos produtos foi revertido automaticamente.")
+                            for pnome, pqtd in itens_db:
+                                run_query(
+                                    "UPDATE produtos SET estoque_atual=estoque_atual+? WHERE nome=?",
+                                    (pqtd, pnome))
+                        run_query("UPDATE vendas SET status='Cancelado' WHERE id=?", (vid,))
+                        show_success(f"Pedido #{vid} cancelado.",
+                                     "Estoque dos produtos revertido automaticamente.")
                         st.rerun()
-            st.markdown('<div style="border-top:0.5px solid #eef0ff;margin:6px 0"></div>',unsafe_allow_html=True)
+                else:
+                    # ── Reativar pedido cancelado ──
+                    if st.button("✅ Reativar", key=f"reativar_{vid}",
+                                 help="Reativar pedido e debitar estoque novamente"):
+                        # Verificar se há estoque suficiente para todos os itens
+                        itens_db = run_query(
+                            "SELECT produto_nome,quantidade FROM itens_venda WHERE venda_id=?",
+                            (vid,), fetch=True)
+                        erros_reativ = []
+                        if itens_db:
+                            for pnome, pqtd in itens_db:
+                                est_atual = run_query(
+                                    "SELECT estoque_atual FROM produtos WHERE nome=?",
+                                    (pnome,), fetch=True)
+                                est_val = est_atual[0][0] if est_atual else 0
+                                if est_val < pqtd:
+                                    erros_reativ.append(
+                                        f"Estoque insuficiente para '{pnome}': "
+                                        f"necessário {pqtd}, disponível {est_val}.")
+                        if erros_reativ:
+                            for e in erros_reativ:
+                                show_error(e, "Ajuste o estoque antes de reativar este pedido.")
+                        else:
+                            if itens_db:
+                                for pnome, pqtd in itens_db:
+                                    run_query(
+                                        "UPDATE produtos SET estoque_atual=estoque_atual-? WHERE nome=?",
+                                        (pqtd, pnome))
+                            run_query("UPDATE vendas SET status='Pago' WHERE id=?", (vid,))
+                            show_success(f"Pedido #{vid} reativado com sucesso!",
+                                         "O estoque foi debitado novamente.")
+                            st.rerun()
+
+            st.markdown(
+                '<div style="border-top:0.5px solid #eef0ff;margin:6px 0"></div>',
+                unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════════════
