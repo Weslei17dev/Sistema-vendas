@@ -190,14 +190,14 @@ def hr():
 # ──────────────────────────────────────────────────────────────
 @contextmanager
 def get_conn():
-    """Abre conexão usando st.secrets e fecha ao final."""
     try:
         conn = psycopg2.connect(
             host     = st.secrets["db"]["host"],
             dbname   = st.secrets["db"]["dbname"],
             user     = st.secrets["db"]["user"],
             password = st.secrets["db"]["password"],
-            port     = st.secrets.get("db", {}).get("port", 5432),
+            port     = st.secrets["db"].get("port", 5432),
+            sslmode  = st.secrets["db"].get("sslmode", "require"),
             connect_timeout = 10,
         )
         yield conn
