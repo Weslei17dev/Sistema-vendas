@@ -192,12 +192,13 @@ def hr():
 def get_conn():
     try:
         conn = psycopg2.connect(
-            host     = st.secrets["db"]["host"],
-            dbname   = st.secrets["db"]["dbname"],
-            user     = st.secrets["db"]["user"],
-            password = st.secrets["db"]["password"],
-            port     = st.secrets["db"].get("port", 5432),
-            sslmode  = st.secrets["db"].get("sslmode", "require"),
+            host            = st.secrets["db"]["host"],
+            dbname          = st.secrets["db"]["dbname"],
+            user            = st.secrets["db"]["user"],
+            password        = st.secrets["db"]["password"],
+            port            = st.secrets["db"].get("port", 5432),
+            sslmode         = "require",
+            options         = "-c channel_binding=disable",
             connect_timeout = 10,
         )
         yield conn
