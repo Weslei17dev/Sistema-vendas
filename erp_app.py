@@ -190,23 +190,27 @@ def hr():
 # ──────────────────────────────────────────────────────────────
 @contextmanager
 def get_conn():
+    db = st.secrets["db"]
     try:
-        # Monta a URL desabilitando channel_binding
-        db = st.secrets["db"]
-        dsn = (
-            f"postgresql://{db['user']}:{db['password']}"
-            f"@{db['host']}:{db.get('port', 5432)}/{db['dbname']}"
-            f"?sslmode=require&channel_binding=disable"
+        # Passar os parâmetros individualmente resolve o problema de URL encoding
+        conn = psycopg2.connect(
+            host=db["host"],
+            database=db["dbname"],
+            user=db["user"],
+            password=db["password"],
+            port=db.get("port", 5432),
+            sslmode="require"
         )
-        conn = psycopg2.connect(dsn, connect_timeout=10)
         yield conn
     except psycopg2.OperationalError as e:
-        st.error(f"❌ Não foi possível conectar ao banco de dados. Verifique as credenciais em secrets.toml.\n\n`{e}`")
+        st.error(f"❌ Não foi possível conectar ao banco de dados: {e}")
         st.stop()
     finally:
+        # Nota: O 'finally' fecha a conexão. 
+        # Certifique-se de que o uso do contextmanager está correto no restante do app.
         try:
             conn.close()
-        except Exception:
+        except:
             pass
 
 
