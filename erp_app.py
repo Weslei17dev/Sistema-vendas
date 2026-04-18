@@ -191,16 +191,14 @@ def hr():
 @contextmanager
 def get_conn():
     try:
-        conn = psycopg2.connect(
-            host            = st.secrets["db"]["host"],
-            dbname          = st.secrets["db"]["dbname"],
-            user            = st.secrets["db"]["user"],
-            password        = st.secrets["db"]["password"],
-            port            = st.secrets["db"].get("port", 5432),
-            sslmode         = "require",
-            options         = "-c channel_binding=disable",
-            connect_timeout = 10,
+        # Monta a URL desabilitando channel_binding
+        db = st.secrets["db"]
+        dsn = (
+            f"postgresql://{db['user']}:{db['password']}"
+            f"@{db['host']}:{db.get('port', 5432)}/{db['dbname']}"
+            f"?sslmode=require&channel_binding=disable"
         )
+        conn = psycopg2.connect(dsn, connect_timeout=10)
         yield conn
     except psycopg2.OperationalError as e:
         st.error(f"❌ Não foi possível conectar ao banco de dados. Verifique as credenciais em secrets.toml.\n\n`{e}`")
