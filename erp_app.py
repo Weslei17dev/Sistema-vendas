@@ -1,7 +1,7 @@
 # ╔══════════════════════════════════════════════════════════════╗
 #  ERP SaaS Multi-tenant  |  PostgreSQL  |  v7.0
 #  Novidades: pool de conexões, desconto, supervisor/representante,
-#  filtros em todos os cadastros, exportação Excel, filtro por data.
+#  filtros em todos os cadastros, exportação Excel, filtro por data .
 # ╚══════════════════════════════════════════════════════════════╝
 
 import streamlit as st
