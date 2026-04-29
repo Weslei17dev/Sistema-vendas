@@ -60,11 +60,35 @@ section[data-testid="stSidebar"] .stButton > button:hover {
   font-weight: 600 !important;
 }
 .nav-active button:hover { background: #1e40af !important; }
-.nav-group {
-  font-size: .62rem; font-weight: 700; letter-spacing: .1em;
-  text-transform: uppercase; color: #475569 !important;
-  padding: .9rem .75rem .25rem; display: block;
+
+/* ── Botão de grupo colapsável ── */
+.nav-group-btn button {
+  width: 100% !important;
+  text-align: left !important;
+  padding: .42rem .75rem !important;
+  border-radius: 6px !important;
+  border: none !important;
+  background: transparent !important;
+  color: #475569 !important;
+  font-size: .62rem !important;
+  font-weight: 700 !important;
+  letter-spacing: .1em !important;
+  text-transform: uppercase !important;
+  transition: background .12s, color .12s !important;
+  cursor: pointer !important;
+  margin-bottom: 0 !important;
+  margin-top: .55rem !important;
 }
+.nav-group-btn button:hover {
+  background: #1e293b !important;
+  color: #94a3b8 !important;
+}
+
+/* Itens de menu levemente indentados dentro do grupo */
+.nav-group-items .stButton > button {
+  padding-left: 1.1rem !important;
+}
+
 .nav-brand {
   font-size: 1rem; font-weight: 700; color: #fff !important;
   padding: 1rem .75rem .5rem; display: block; letter-spacing: -.02em;
@@ -290,7 +314,6 @@ ICONS = {
 }
 
 def icon_btn(key, icon_name, tip=""):
-    """Retorna se o botão SVG foi clicado"""
     return st.button(f'<span title="{tip}">{ICONS.get(icon_name,"")}</span>',
                      key=key, help=tip, unsafe_allow_html=True)
 
@@ -319,7 +342,7 @@ def hr(): st.markdown('<hr class="erp">', unsafe_allow_html=True)
 def badge(txt, cls="b-gray"):
     return f'<span class="badge {cls}">{txt}</span>'
 
-# ── Pool de conexões (INALTERADO) ───────────────────────────────
+# ── Pool de conexões ───────────────────────────────────────────
 @st.cache_resource
 def get_pool():
     db = st.secrets["db"]
@@ -385,8 +408,7 @@ def pode(perm):
     if perfil == "admin": return True
     return perm not in ["log","despesas_del","comissoes_pagar"]
 
-# ── @st.cache_data para dados relativamente estáticos ──────────
-# TTL curto (30s) para equilibrar frescor vs performance
+# ── Cache de dados ──────────────────────────────────────────────
 @st.cache_data(ttl=30)
 def get_categorias(empresa_id):
     return qry("SELECT nome FROM categorias WHERE empresa_id=%s AND ativo=TRUE ORDER BY nome",
@@ -429,7 +451,6 @@ def get_clientes_ativos(empresa_id):
                (empresa_id,), fetch=True) or []
 
 def invalidar_cache():
-    """Invalida caches de dados mutáveis após escrita."""
     get_produtos_ativos.clear()
     get_clientes_ativos.clear()
     get_categorias.clear()
@@ -504,6 +525,12 @@ _D = {
     "edit_cli_id": None,"edit_sup_id": None,"edit_rep_id": None,
     "edit_forn_id": None,"edit_grupo_id": None,
     "edit_orc_id": None,
+    # ── Estado dos grupos do menu (True = aberto) ──
+    "nav_grp_Vendas": True,
+    "nav_grp_Financeiro": True,
+    "nav_grp_Cadastros": True,
+    "nav_grp_Movimentação": True,
+    "nav_grp_Sistema": True,
 }
 for k, v in _D.items():
     if k not in st.session_state: st.session_state[k] = v
@@ -590,7 +617,7 @@ if not st.session_state.logado:
 EMPRESA_ID = eid()
 cur_sym = st.session_state.empresa_moeda
 
-# ── Alertas automáticos (1x por sessão via cache) ───────────────
+# ── Alertas automáticos ─────────────────────────────────────────
 @st.cache_data(ttl=300)
 def _verificar_alertas(empresa_id):
     low = qry("SELECT nome FROM produtos WHERE empresa_id=%s AND ativo=TRUE AND estoque_atual<=estoque_minimo", (empresa_id,), fetch=True)
@@ -612,7 +639,7 @@ _verificar_alertas(EMPRESA_ID)
 notif_count_r = qry("SELECT COUNT(*) FROM notificacoes WHERE empresa_id=%s AND lida=FALSE", (EMPRESA_ID,), fetch=True)
 NOTIF_COUNT = notif_count_r[0][0] if notif_count_r else 0
 
-# ── Sidebar ─────────────────────────────────────────────────────
+# ── Estrutura do menu ────────────────────────────────────────────
 MENU_STRUCTURE = [
     ("Vendas", [
         ("Dashboard",           "dashboard"),
@@ -646,23 +673,45 @@ MENU_STRUCTURE = [
     ]),
 ]
 
+# ── Sidebar com grupos colapsáveis ──────────────────────────────
 with st.sidebar:
     st.markdown(f'<span class="nav-brand">ERP <span>Pro</span></span>', unsafe_allow_html=True)
     st.markdown(f'<span class="nav-tenant">{st.session_state.empresa_nome}</span>', unsafe_allow_html=True)
 
     for group_label, items in MENU_STRUCTURE:
-        st.markdown(f'<span class="nav-group">{group_label}</span>', unsafe_allow_html=True)
-        for label, icon_key in items:
-            is_active = st.session_state.active_menu == label
-            dot = '<span class="notif-dot"></span>' if label == "Notificações" and NOTIF_COUNT > 0 else ""
-            with st.container():
-                if is_active: st.markdown('<div class="nav-active">', unsafe_allow_html=True)
-                btn_label = f"{label}{dot}"
-                if st.button(btn_label, key=f"nav_{icon_key}", use_container_width=True):
-                    st.session_state.active_menu = label
-                    reset_editing()
-                    st.rerun()
-                if is_active: st.markdown('</div>', unsafe_allow_html=True)
+        sk_open = f"nav_grp_{group_label}"
+        is_open = st.session_state.get(sk_open, True)
+        arrow = "▾" if is_open else "▸"
+
+        # Botão de toggle do grupo (header colapsável)
+        with st.container():
+            st.markdown('<div class="nav-group-btn">', unsafe_allow_html=True)
+            if st.button(
+                f"{arrow}  {group_label}",
+                key=f"grp_toggle_{group_label}",
+                use_container_width=True
+            ):
+                st.session_state[sk_open] = not is_open
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # Itens do grupo (só visíveis quando expandido)
+        if is_open:
+            st.markdown('<div class="nav-group-items">', unsafe_allow_html=True)
+            for label, icon_key in items:
+                is_active = st.session_state.active_menu == label
+                dot = '<span class="notif-dot"></span>' if label == "Notificações" and NOTIF_COUNT > 0 else ""
+                with st.container():
+                    if is_active:
+                        st.markdown('<div class="nav-active">', unsafe_allow_html=True)
+                    btn_label = f"  {label}{dot}"
+                    if st.button(btn_label, key=f"nav_{icon_key}", use_container_width=True):
+                        st.session_state.active_menu = label
+                        reset_editing()
+                        st.rerun()
+                    if is_active:
+                        st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
     n_cart = len(st.session_state.cart)
     if n_cart:
@@ -686,7 +735,6 @@ menu = st.session_state.active_menu
 if menu == "Dashboard":
     page_header("dashboard", "Dashboard", f"Bem-vindo, {st.session_state.usuario_nome}")
 
-    # Busca todos os KPIs em UMA query agregada
     kpi = qry("""
         SELECT
           COALESCE(SUM(CASE WHEN status='Pago' AND tipo='Venda' THEN valor_total ELSE 0 END),0) AS fat,
@@ -779,7 +827,6 @@ elif menu == "Busca Global":
     if busca and len(busca) >= 2:
         b = f"%{busca}%"
         resultados = []
-        # Executa todas as buscas de uma vez
         clis = qry("SELECT nome,documento,cidade FROM clientes WHERE empresa_id=%s AND (nome ILIKE %s OR documento ILIKE %s)", (EMPRESA_ID,b,b), fetch=True)
         for cn,cdoc,ccid in (clis or []): resultados.append(("Cliente",cn,f"{cdoc} · {ccid or '—'}","Clientes"))
         prods = qry("SELECT nome,sku,categoria FROM produtos WHERE empresa_id=%s AND (nome ILIKE %s OR sku ILIKE %s)", (EMPRESA_ID,b,b), fetch=True)
@@ -806,9 +853,8 @@ elif menu == "Busca Global":
 elif menu == "Pedidos":
     page_header("cart","Pedidos","Monte e finalize pedidos")
 
-    # Carrega dados via cache
     clis_raw = get_clientes_ativos(EMPRESA_ID)
-    clis = [c for c in clis_raw if c[12]]  # apenas ativos
+    clis = [c for c in clis_raw if c[12]]
     prods_raw = get_produtos_ativos(EMPRESA_ID)
     prods = [p for p in prods_raw if p[8] and p[6] > 0]
     pags = get_pagamentos(EMPRESA_ID)
@@ -928,7 +974,6 @@ elif menu == "Pedidos":
                                 qry("INSERT INTO movimentacoes_estoque(empresa_id,produto_id,tipo,quantidade,motivo,usuario_nome) VALUES(%s,%s,'Saída',%s,%s,%s)",
                                     (EMPRESA_ID,item["id"],item["qtd"],f"Venda #{vid}",st.session_state.usuario_nome))
 
-                        # Gerar parcelas de contas a receber
                         if a_prazo and vencimento and tipo_ped=="Venda":
                             val_parcela = tv/parcelas_n
                             for p_n in range(parcelas_n):
@@ -948,7 +993,7 @@ elif menu == "Pedidos":
             show_inf("Carrinho vazio.","Adicione produtos para liberar finalização.")
 
 # ══════════════════════════════════════
-# ORÇAMENTOS (com edição)
+# ORÇAMENTOS
 # ══════════════════════════════════════
 elif menu == "Orçamentos":
     page_header("quote","Orçamentos","Gerencie propostas em aberto")
@@ -975,19 +1020,16 @@ elif menu == "Orçamentos":
 
                 col_oc1, col_oc2, col_oc3 = st.columns(3)
 
-                # Editar orçamento
                 if col_oc1.button("Editar orçamento", key=f"edit_orc_{oid}"):
                     st.session_state.edit_orc_id = oid
                 if st.session_state.edit_orc_id == oid:
                     st.markdown("---")
                     st.markdown("**Editar orçamento**")
-                    # Remover itens antigos e lançar novos
                     itens_orc = qry("SELECT produto_nome,quantidade,preco_unit FROM itens_venda WHERE venda_id=%s AND empresa_id=%s",
                                     (oid,EMPRESA_ID), fetch=True)
                     if "orc_cart" not in st.session_state:
                         st.session_state.orc_cart = [{"nome":n,"qtd":q,"preco":float(p)} for n,q,p in (itens_orc or [])]
 
-                    # Mini-carrinho do orçamento
                     for j, it in enumerate(st.session_state.orc_cart):
                         oc1, oc2 = st.columns([7,1])
                         oc1.markdown(f"- **{it['nome']}** · {it['qtd']} un × {cur_sym} {it['preco']:.2f}")
@@ -1033,7 +1075,6 @@ elif menu == "Orçamentos":
                             if "orc_cart" in st.session_state: del st.session_state["orc_cart"]
                             st.rerun()
 
-                # Converter
                 if col_oc2.button("Converter em venda", key=f"conv_{oid}"):
                     idb = qry("SELECT iv.produto_nome,iv.quantidade,p.id FROM itens_venda iv LEFT JOIN produtos p ON p.nome=iv.produto_nome AND p.empresa_id=iv.empresa_id WHERE iv.venda_id=%s AND iv.empresa_id=%s",(oid,EMPRESA_ID),fetch=True)
                     errs = []
@@ -1051,7 +1092,6 @@ elif menu == "Orçamentos":
                         invalidar_cache()
                         show_ok(f"Orçamento #{oid} convertido!"); st.rerun()
 
-                # Descartar
                 if col_oc3.button("Descartar", key=f"disc_{oid}"):
                     qry("UPDATE vendas SET status='Cancelado' WHERE id=%s AND empresa_id=%s",(oid,EMPRESA_ID))
                     show_ok(f"Orçamento #{oid} descartado."); st.rerun()
@@ -1627,7 +1667,6 @@ elif menu == "Clientes":
         filtro_cli = cf2.selectbox("Status", ["Ativos","Inativos","Todos"], key="filtro_cli", label_visibility="collapsed")
         filtro_grp = cg2.selectbox("Grupo", ["Todos"]+[g[1] for g in grupos], key="filtro_grp_cli", label_visibility="collapsed")
 
-    # Usa cache para a lista
     cf_ = get_clientes_ativos(EMPRESA_ID)
     cv = list(cf_)
     if filtro_cli == "Ativos":   cv = [c for c in cv if c[12]]
@@ -1648,7 +1687,6 @@ elif menu == "Clientes":
         st.markdown(f"**{len(cv)} cliente(s)**")
         for cli_row in cv:
             cid,cnome,cdoc,ctel,cemail,crua,cnum,ccomp,cbairro,ccidade,cestado,ccep,cativo,cgrp = cli_row
-            # badge construído em Python, não como HTML raw do banco
             status_txt = "Ativo" if cativo else "Inativo"
             status_cls = "b-green" if cativo else "b-gray"
 
@@ -1680,7 +1718,6 @@ elif menu == "Clientes":
                             elif res=="duplicate": show_err("CPF/CNPJ já existe.")
                             else: show_err("Erro.")
 
-                # Histórico de compras — lazy: só busca ao expandir
                 hist_cli = qry("""SELECT v.id,TO_CHAR(v.data,'DD/MM/YYYY'),v.valor_total,v.status
                                   FROM vendas v WHERE v.empresa_id=%s AND v.cliente_name=%s AND v.tipo='Venda'
                                   ORDER BY v.data DESC LIMIT 10""", (EMPRESA_ID,cnome), fetch=True)
@@ -1754,7 +1791,6 @@ elif menu == "Estoque":
         busca_p = fb.text_input("Buscar",placeholder="Nome ou SKU...",key="busca_prod",label_visibility="collapsed")
         mostrar = ff.selectbox("Status",["Ativos","Inativos","Todos"],key="filtro_prod",label_visibility="collapsed")
 
-    # Usa cache
     pr = get_produtos_ativos(EMPRESA_ID)
     fl = list(pr)
     if mostrar=="Ativos":   fl=[p for p in fl if p[8]]
@@ -1940,7 +1976,7 @@ elif menu == "Entrada NF":
           </div></div>''',unsafe_allow_html=True)
 
 # ══════════════════════════════════════
-# COMISSÕES (com edição de % inline)
+# COMISSÕES
 # ══════════════════════════════════════
 elif menu == "Comissões":
     page_header("commission","Comissões","Gerencie e acompanhe comissões")
@@ -1969,7 +2005,6 @@ elif menu == "Comissões":
             stot=float(stot or 0); scom=float(scom or 0)
             with st.expander(f"{snome} · Comissão: {float(spct):.1f}% · {sped or 0} pedido(s) · {cur_sym} {scom:,.2f}"):
                 st.markdown(f"**Faturou:** {cur_sym} {stot:,.2f} · **Comissão calculada:** {cur_sym} {scom:,.2f}")
-                # Edição inline da % de comissão
                 with st.form(f"f_edit_com_sup_{sid_c}"):
                     nova_pct=st.number_input("Alterar comissão (%)",value=float(spct),min_value=0.0,max_value=100.0,step=0.5,format="%.2f")
                     if st.form_submit_button("Salvar %"):
